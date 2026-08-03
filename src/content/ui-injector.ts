@@ -812,7 +812,7 @@ export class UIInjector {
     (footer.querySelector('span') as HTMLElement).textContent =
       `${corrections.length} suggestion${corrections.length > 1 ? 's' : ''}`;
 
-    if (corrections.length > 1) {
+    if (corrections.length > 1 && this.activeTab !== 'grammar') {
       const acceptAllBtn = document.createElement('button');
       acceptAllBtn.className = 'og-btn og-btn-primary';
       acceptAllBtn.textContent = 'Accept All';
@@ -822,16 +822,6 @@ export class UIInjector {
         handlers.onAcceptAll(corrections);
       });
       footer.appendChild(acceptAllBtn);
-    } else {
-      const acceptBtn = document.createElement('button');
-      acceptBtn.className = 'og-btn og-btn-primary';
-      acceptBtn.textContent = 'Accept';
-      acceptBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handlers.onAccept(corrections[0]);
-      });
-      footer.appendChild(acceptBtn);
     }
 
     this.scheduleReposition();

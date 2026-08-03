@@ -34,6 +34,33 @@ function getFieldText(field: TextField): string {
 }
 
 /**
+ * Builds a Range over text nodes from a character offset into their joined
+ * text. Start/end offsets may fall exactly on node boundaries.
+ */
+function buildRangeAt(textNodes: Text[], start: number, end: number): Range | null {
+  const range = document.createRange();
+  let pos = 0;
+  let started = false;
+  for (let i = 0; i < textNodes.length; i++) {
+    const len = textNodes[i].textContent?.length || 0;
+    if (!started && start >= pos && start <= pos + len) {
+      range.setStart(textNodes[i], start - pos);
+      started = true;
+    }
+    if (started && end <= pos + len) {
+      range.setEnd(textNodes[i], end - pos);
+      return range;
+    }
+    pos += len;
+  }
+  return null;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Robustly locates a verbatim substring inside a contenteditable's text nodes
  * and builds a Range covering it. Searches against real textContent (not
  * innerText) so it stays aligned with the DOM, and prefers the match closest
@@ -43,20 +70,38 @@ function findTextRangeInField(field: HTMLElement, search: string, hintStart: num
   if (!search) return null;
 
   const textNodes: Text[] = [];
-  let totalLen = 0;
 
   const walker = document.createTreeWalker(field, NodeFilter.SHOW_TEXT, null);
   let node: Text | null;
   while (node = walker.nextNode() as Text | null) {
     textNodes.push(node);
-    totalLen += node.textContent?.length || 0;
   }
 
   if (textNodes.length === 0) return null;
 
   const fullText = textNodes.map(n => n.textContent).join('');
   let idx = fullText.indexOf(search);
-  if (idx === -1) return null;
+
+  if (idx === -1) {
+    // The analyzed text comes from innerText, which renders <br> and block
+    // boundaries as line breaks that textContent omits. Retry with a
+    // whitespace-insensitive match so multi-line edits still resolve.
+    const re = new RegExp(escapeRegex(search).replace(/\s+/g, '\\s*'), 'i');
+    const m = re.exec(fullText);
+    if (m) {
+      let s = m.index;
+      let e = m.index + m[0].length;
+      // Drop whitespace swallowed around the match so we don't eat
+      // neighboring text.
+      const leading = (m[0].match(/^\s*/) || [''])[0].length;
+      const trailing = (m[0].match(/\s*$/) || [''])[0].length;
+      s += leading;
+      e -= trailing;
+      if (e <= s) return null;
+      return buildRangeAt(textNodes, s, e);
+    }
+    return null;
+  }
 
   // Prefer a match near where the correction was expected, but never stray
   // more than a little — the verbatim match is what matters most.
@@ -64,32 +109,24 @@ function findTextRangeInField(field: HTMLElement, search: string, hintStart: num
   const nearIdx = fullText.indexOf(search, windowStart);
   if (nearIdx !== -1) idx = nearIdx;
 
-  const range = document.createRange();
-  let pos = 0;
-  for (let i = 0; i < textNodes.length; i++) {
-    const len = textNodes[i].textContent?.length || 0;
-    if (idx >= pos && idx < pos + len) {
-      const withinStart = idx - pos;
-      if (withinStart + search.length <= len) {
-        range.setStart(textNodes[i], withinStart);
-        range.setEnd(textNodes[i], withinStart + search.length);
-      } else {
-        range.setStart(textNodes[i], withinStart);
-        let remaining = withinStart + search.length - len;
-        let j = i + 1;
-        while (remaining > 0 && j < textNodes.length) {
-          const l2 = textNodes[j].textContent?.length || 0;
-          const take = Math.min(remaining, l2);
-          range.setEnd(textNodes[j], take);
-          remaining -= take;
-          j++;
-        }
-      }
-      return range;
-    }
-    pos += len;
+  return buildRangeAt(textNodes, idx, idx + search.length);
+}
+
+/**
+ * Splices replacement text straight into the DOM. Never depends on focus,
+ * selection, or execCommand, so it works even after the user stops
+ * selecting text or clicks the panel.
+ */
+function spliceRangeText(field: HTMLElement, range: Range, suggestion: string): boolean {
+  try {
+    range.deleteContents();
+    range.insertNode(document.createTextNode(suggestion));
+    const selection = window.getSelection();
+    if (selection) selection.removeAllRanges();
+    return true;
+  } catch {
+    return false;
   }
-  return null;
 }
 
 /**
@@ -117,20 +154,47 @@ function applyTextReplacement(field: TextField, start: number, end: number, orig
   }
 
   try {
-    // Ensure the field is focused so execCommand targets the right context.
-    if (document.activeElement !== field) {
-      field.focus();
+    const range = findTextRangeInField(field, original, start);
+
+    if (range) {
+      // Prefer execCommand when the field genuinely holds focus — it
+      // preserves the host editor's undo stack. It silently no-ops
+      // otherwise, so always verify the text actually changed before
+      // trusting it.
+      if (document.activeElement === field && document.hasFocus()) {
+        const before = getFieldText(field);
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+          selection.addRange(range.cloneRange());
+          let ok = false;
+          try {
+            ok = document.execCommand('insertText', false, suggestion);
+          } catch {
+            ok = false;
+          }
+          if (ok && getFieldText(field) !== before) {
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+          }
+        }
+      }
+
+      // Direct DOM splice — reliable regardless of focus or selection state.
+      if (spliceRangeText(field, range, suggestion)) {
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
     }
 
-    const range = findTextRangeInField(field, original, start);
-    if (!range) return false;
-
-    const selection = window.getSelection();
-    if (!selection) return false;
-
-    selection.removeAllRanges();
-    selection.addRange(range);
-    document.execCommand('insertText', false, suggestion);
+    // Last resort: recompose the field's full text and rewrite the whole
+    // field. Guaranteed to land whenever the original still exists in the
+    // plain text, even if the DOM structure drifted from the analyzed text.
+    const current = getFieldText(field);
+    const pos = current.indexOf(original);
+    if (pos === -1) return false;
+    const next = current.slice(0, pos) + suggestion + current.slice(pos + original.length);
+    if (!replaceEntireFieldText(field, next)) return false;
     field.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   } catch {
@@ -145,28 +209,30 @@ function replaceEntireFieldText(field: TextField, newText: string): boolean {
     return true;
   }
   try {
-    if (document.activeElement !== field) {
-      field.focus();
+    if (document.activeElement === field && document.hasFocus()) {
+      const before = getFieldText(field);
+      const selection = window.getSelection();
+      if (selection) {
+        const range = document.createRange();
+        range.selectNodeContents(field);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        let ok = false;
+        try {
+          ok = document.execCommand('insertText', false, newText);
+        } catch {
+          ok = false;
+        }
+        if (ok && getFieldText(field) !== before) {
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        }
+      }
     }
-    const selection = window.getSelection();
-    if (!selection) return false;
-    const range = document.createRange();
-    range.selectNodeContents(field);
-    selection.removeAllRanges();
-    selection.addRange(range);
 
-    let ok = false;
-    try {
-      ok = document.execCommand('insertText', false, newText);
-    } catch {
-      ok = false;
-    }
-
-    if (!ok) {
-      // Fallback: replace the rendered content directly.
-      while (field.firstChild) field.removeChild(field.firstChild);
-      field.appendChild(document.createTextNode(newText));
-    }
+    // Fallback: replace the rendered content directly.
+    while (field.firstChild) field.removeChild(field.firstChild);
+    field.appendChild(document.createTextNode(newText));
     field.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   } catch {
@@ -251,7 +317,7 @@ function openPanelFor(field: TextField, initialTab: TabId) {
       onAccept: (correction) => {
         const ok = applyTextReplacement(field, correction.start, correction.end, correction.original, correction.suggestion);
         if (!ok) {
-          ui.showToast('Could not apply that suggestion — select the text and try again', 'error');
+          ui.showToast('Could not apply that suggestion — the text has changed, try again', 'error');
           return;
         }
         fieldLastText.set(field, getFieldText(field));
