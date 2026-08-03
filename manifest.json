@@ -16,7 +16,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Open Grammarly"
+    "default_title": "GrammarlyX"
   },
   "options_page": "options.html",
   "content_scripts": [
