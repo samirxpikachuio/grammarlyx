@@ -1,4 +1,4 @@
-# Open Grammarly
+#  GrammarlyX
 
 **The free, open-source alternative to Grammarly.**
 
@@ -155,7 +155,7 @@ This project is open source and available under the [ISC License](LICENSE).
 **Star this repo if you find it useful!** Help spread the word about the open-source alternative to Grammarly.
 
 ## Acknowledgments
-
+- This project is based on [open-grammarly](https://github.com/Aaryan6/open-grammarly)
 - [DeepSeek](https://www.deepseek.com/) for providing AI model access
 - [CRXJS](https://crxjs.dev/) for the excellent Chrome extension Vite plugin
 - [Lucide](https://lucide.dev/) for beautiful icons
