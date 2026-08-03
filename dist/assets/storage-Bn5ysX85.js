@@ -1,0 +1,1 @@
+const e={enabled:!0,aggressiveness:.5,mode:"professional",lastTranslateTarget:"English"};async function a(){const t=(await chrome.storage.local.get("settings")).settings||{};return{...e,...t}}async function n(s){const t=await a();await chrome.storage.local.set({settings:{...t,...s}})}export{e as D,a as g,n as s};

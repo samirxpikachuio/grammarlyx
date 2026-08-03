@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Open Grammarly",
+  "version": "1.0.0",
+  "description": "AI Writing Assistant using DeepSeek",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://dev.s4m1r.ct.ws/*"
+  ],
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Open Grammarly"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "js": [
+        "assets/index.ts-loader-CBU0PmgA.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": [
+        "assets/*",
+        "assets/deepseek-BqkivcBP.js",
+        "assets/index.ts-BmLRV2aA.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ]
+}
