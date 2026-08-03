@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Open Grammarly",
+  "name": "GrammarlyX",
   "version": "1.0.0",
   "description": "AI Writing Assistant using DeepSeek",
   "icons": {
